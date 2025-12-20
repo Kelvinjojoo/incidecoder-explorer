@@ -23,7 +23,7 @@ export interface ScrapedProduct {
   url: string;
   brand: string;
   description: string;
-  ingredientsOverview: string;
+  ingredientsOverview: string[];
   ingredientsOverviewCount: number;
   skinThrough: SkinThroughItem[];
   skinThroughIngredientNames: string[];
