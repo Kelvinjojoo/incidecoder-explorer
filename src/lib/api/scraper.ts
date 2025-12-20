@@ -36,9 +36,20 @@ type ScraperResponse<T = unknown> = {
 } & T;
 
 export const scraperApi = {
-  async getBrands(): Promise<ScraperResponse<{ brands?: Brand[] }>> {
+  async getBrands(): Promise<ScraperResponse<{ brands?: Brand[]; offset?: number; hasMore?: boolean }>> {
     const { data, error } = await supabase.functions.invoke('incidecoder-scraper', {
       body: { action: 'get-brands' },
+    });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    return data;
+  },
+
+  async getBrandsPage(offset: number): Promise<ScraperResponse<{ brands?: Brand[]; offset?: number; count?: number; hasMore?: boolean }>> {
+    const { data, error } = await supabase.functions.invoke('incidecoder-scraper', {
+      body: { action: 'get-brands-page', url: String(offset) },
     });
 
     if (error) {

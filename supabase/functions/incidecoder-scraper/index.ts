@@ -42,9 +42,14 @@ Deno.serve(async (req) => {
 
     console.log(`Action: ${action}, URL: ${url || brandUrl}`);
 
-    // Action: Get all brands from INCIDecoder
+    // Action: Get all brands from INCIDecoder (single page)
     if (action === 'get-brands') {
-      console.log('Fetching all brands from INCIDecoder...');
+      const { offset = 0 } = await req.json().catch(() => ({ offset: 0 }));
+      const pageUrl = offset > 0 
+        ? `https://incidecoder.com/brands?offset=${offset}` 
+        : 'https://incidecoder.com/brands';
+      
+      console.log(`Fetching brands from page: ${pageUrl}`);
       
       const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
         method: 'POST',
@@ -53,7 +58,7 @@ Deno.serve(async (req) => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          url: 'https://incidecoder.com/brands',
+          url: pageUrl,
           formats: ['html', 'links'],
           onlyMainContent: true,
         }),
@@ -75,7 +80,7 @@ Deno.serve(async (req) => {
         link.includes('/brands/') && !link.endsWith('/brands') && !link.includes('?')
       );
 
-      console.log(`Found ${brandLinks.length} brands`);
+      console.log(`Found ${brandLinks.length} brands on page offset=${offset}`);
       
       return new Response(
         JSON.stringify({ 
@@ -83,7 +88,64 @@ Deno.serve(async (req) => {
           brands: brandLinks.map((link: string) => ({
             url: link,
             name: link.split('/brands/')[1]?.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()) || 'Unknown'
-          }))
+          })),
+          offset,
+          hasMore: brandLinks.length > 0 // If we got brands, there might be more pages
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Action: Get brands from a specific page
+    if (action === 'get-brands-page') {
+      const offset = parseInt(String(url || '0'), 10);
+      const pageUrl = offset > 0 
+        ? `https://incidecoder.com/brands?offset=${offset}` 
+        : 'https://incidecoder.com/brands';
+      
+      console.log(`Fetching brands from page offset=${offset}: ${pageUrl}`);
+      
+      const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url: pageUrl,
+          formats: ['html', 'links'],
+          onlyMainContent: true,
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok) {
+        console.error('Firecrawl API error:', data);
+        return new Response(
+          JSON.stringify({ success: false, error: data.error || 'Failed to fetch brands page' }),
+          { status: response.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Extract brand links from the response
+      const links = data.data?.links || [];
+      const brandLinks = links.filter((link: string) => 
+        link.includes('/brands/') && !link.endsWith('/brands') && !link.includes('?')
+      );
+
+      console.log(`Found ${brandLinks.length} brands on page offset=${offset}`);
+      
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          brands: brandLinks.map((link: string) => ({
+            url: link,
+            name: link.split('/brands/')[1]?.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()) || 'Unknown'
+          })),
+          offset,
+          count: brandLinks.length,
+          hasMore: brandLinks.length > 0
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
