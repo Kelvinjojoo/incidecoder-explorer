@@ -112,7 +112,7 @@ export function useScraper() {
           const result = await scraperApi.scrapeProduct(product.url);
           if (result.success && result.product) {
             setProducts((prev) => [...prev, result.product!]);
-            addLog('success', `Scraped: ${result.product.name}`);
+            addLog('success', `Scraped: ${result.product.name} (Brand: ${result.product.brand})`);
           } else {
             addLog('warning', `Failed to scrape: ${product.name}`);
           }

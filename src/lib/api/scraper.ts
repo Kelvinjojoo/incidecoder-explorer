@@ -10,6 +10,16 @@ export interface ProductLink {
   url: string;
 }
 
+export interface KeyIngredientCategory {
+  category: string;
+  ingredients: string[];
+}
+
+export interface OtherIngredientCategory {
+  category: string;
+  ingredients: string[];
+}
+
 export interface SkinThroughItem {
   name: string;
   whatItDoes: string;
@@ -24,8 +34,8 @@ export interface ScrapedProduct {
   brand: string;
   description: string;
   ingredientsOverview: string;
-  keyIngredients: string[];
-  otherIngredients: string[];
+  keyIngredients: KeyIngredientCategory[];
+  otherIngredients: OtherIngredientCategory[];
   skinThrough: SkinThroughItem[];
 }
 
