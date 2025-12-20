@@ -37,7 +37,7 @@ export function ProductsTable({ products }: ProductsTableProps) {
     return (
       p.name.toLowerCase().includes(searchLower) ||
       p.brand.toLowerCase().includes(searchLower) ||
-      p.ingredientsOverview.toLowerCase().includes(searchLower) ||
+      p.ingredientsOverview.some((i) => i.toLowerCase().includes(searchLower)) ||
       p.skinThroughIngredientNames.some((i) => i.toLowerCase().includes(searchLower))
     );
   });

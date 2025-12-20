@@ -16,7 +16,7 @@ interface ScrapedProduct {
   url: string;
   brand: string;
   description: string;
-  ingredientsOverview: string;
+  ingredientsOverview: string[];
   ingredientsOverviewCount: number;
   skinThrough: SkinThroughItem[];
   skinThroughIngredientNames: string[];
@@ -334,7 +334,6 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
     }
   }
 
-  ingredientsOverview = ingredientsOverviewList.join(', ');
   const ingredientsOverviewCount = ingredientsOverviewList.length;
 
   // Extract Skim Through / Skin Through table from HTML (more reliable)
@@ -455,7 +454,7 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
     url,
     brand,
     description,
-    ingredientsOverview,
+    ingredientsOverview: ingredientsOverviewList,
     ingredientsOverviewCount,
     skinThrough,
     skinThroughIngredientNames,
@@ -537,6 +536,7 @@ function normalizeIdRating(text: string): string {
 function normalizeIngredientName(text: string): string {
   return (text ?? '')
     .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\s*,\s*/g, ',')  // Normalize comma spacing (e.g., "1, 2" -> "1,2")
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
