@@ -31,31 +31,19 @@ export function ProductsTable({ products }: ProductsTableProps) {
   const [selectedProduct, setSelectedProduct] = useState<ScrapedProduct | null>(null);
   const perPage = 20;
 
-  // Helper to get all ingredient names from categories
-  const getAllIngredientNames = (categories: { category: string; ingredients: string[] }[]) => {
-    return categories.flatMap(c => c.ingredients);
-  };
-
   const filtered = products.filter((p) => {
     const searchLower = search.toLowerCase();
-    const allKeyIngredients = getAllIngredientNames(p.keyIngredients);
-    const allOtherIngredients = getAllIngredientNames(p.otherIngredients);
     
     return (
       p.name.toLowerCase().includes(searchLower) ||
       p.brand.toLowerCase().includes(searchLower) ||
-      allKeyIngredients.some((i) => i.toLowerCase().includes(searchLower)) ||
-      allOtherIngredients.some((i) => i.toLowerCase().includes(searchLower))
+      p.ingredientsOverview.toLowerCase().includes(searchLower) ||
+      p.skinThroughIngredientNames.some((i) => i.toLowerCase().includes(searchLower))
     );
   });
 
   const totalPages = Math.ceil(filtered.length / perPage);
   const paginated = filtered.slice((page - 1) * perPage, page * perPage);
-
-  // Count total ingredients in categories
-  const countIngredients = (categories: { category: string; ingredients: string[] }[]) => {
-    return categories.reduce((sum, cat) => sum + cat.ingredients.length, 0);
-  };
 
   return (
     <>
@@ -86,8 +74,7 @@ export function ProductsTable({ products }: ProductsTableProps) {
               <TableRow className="hover:bg-transparent border-border/50">
                 <TableHead className="font-semibold">Product</TableHead>
                 <TableHead className="font-semibold">Brand</TableHead>
-                <TableHead className="font-semibold">Key Ingredients</TableHead>
-                <TableHead className="font-semibold">Other Ingredients</TableHead>
+                <TableHead className="font-semibold text-center">Overview Count</TableHead>
                 <TableHead className="font-semibold text-center">Skim Through</TableHead>
                 <TableHead className="font-semibold w-[100px]">Actions</TableHead>
               </TableRow>
@@ -95,79 +82,59 @@ export function ProductsTable({ products }: ProductsTableProps) {
             <TableBody>
               {paginated.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={5} className="text-center py-12 text-muted-foreground">
                     {products.length === 0
                       ? 'No products scraped yet. Click "Start Scraping" to begin.'
                       : 'No products match your search.'}
                   </TableCell>
                 </TableRow>
               ) : (
-                paginated.map((product, idx) => {
-                  const keyCount = countIngredients(product.keyIngredients);
-                  const otherCount = countIngredients(product.otherIngredients);
-                  const firstFewIngredients = getAllIngredientNames(product.keyIngredients).slice(0, 3);
-
-                  return (
-                    <TableRow
-                      key={product.url + idx}
-                      className="border-border/30 hover:bg-muted/30 transition-colors animate-slide-up"
-                      style={{ animationDelay: `${idx * 20}ms` }}
-                    >
-                      <TableCell className="font-medium max-w-[250px]">
-                        <div className="truncate" title={product.name}>
-                          {product.name}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="font-normal">
-                          {product.brand}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="max-w-[200px]">
-                        <div className="flex flex-wrap gap-1">
-                          {firstFewIngredients.map((ing, i) => (
-                            <Badge key={i} variant="secondary" className="text-xs font-normal">
-                              {ing.length > 20 ? ing.slice(0, 20) + '...' : ing}
-                            </Badge>
-                          ))}
-                          {keyCount > 3 && (
-                            <Badge variant="secondary" className="text-xs">
-                              +{keyCount - 3}
-                            </Badge>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell className="font-mono text-sm text-muted-foreground">
-                        {otherCount}
-                      </TableCell>
-                      <TableCell className="text-center font-mono text-sm">
-                        {product.skinThrough.length}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8"
-                            onClick={() => setSelectedProduct(product)}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8"
-                            asChild
-                          >
-                            <a href={product.url} target="_blank" rel="noopener noreferrer">
-                              <ExternalLink className="h-4 w-4" />
-                            </a>
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
+                paginated.map((product, idx) => (
+                  <TableRow
+                    key={product.url + idx}
+                    className="border-border/30 hover:bg-muted/30 transition-colors animate-slide-up"
+                    style={{ animationDelay: `${idx * 20}ms` }}
+                  >
+                    <TableCell className="font-medium max-w-[250px]">
+                      <div className="truncate" title={product.name}>
+                        {product.name}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="font-normal">
+                        {product.brand}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-center font-mono text-sm">
+                      {product.ingredientsOverviewCount}
+                    </TableCell>
+                    <TableCell className="text-center font-mono text-sm">
+                      {product.skinThroughCount}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          onClick={() => setSelectedProduct(product)}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          asChild
+                        >
+                          <a href={product.url} target="_blank" rel="noopener noreferrer">
+                            <ExternalLink className="h-4 w-4" />
+                          </a>
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
               )}
             </TableBody>
           </Table>
@@ -234,49 +201,20 @@ export function ProductsTable({ products }: ProductsTableProps) {
                 {selectedProduct.ingredientsOverview && (
                   <div>
                     <h4 className="font-semibold mb-2 text-sm text-muted-foreground uppercase tracking-wide">
-                      Ingredients Overview
+                      Ingredients Overview ({selectedProduct.ingredientsOverviewCount} ingredients)
                     </h4>
                     <p className="text-sm font-mono text-muted-foreground">{selectedProduct.ingredientsOverview}</p>
                   </div>
                 )}
 
-                {selectedProduct.keyIngredients.length > 0 && (
+                {selectedProduct.skinThroughIngredientNames.length > 0 && (
                   <div>
                     <h4 className="font-semibold mb-2 text-sm text-muted-foreground uppercase tracking-wide">
-                      Key Ingredients
+                      Skim Through Ingredient Names ({selectedProduct.skinThroughCount} ingredients)
                     </h4>
-                    <div className="space-y-3">
-                      {selectedProduct.keyIngredients.map((cat, i) => (
-                        <div key={i}>
-                          <span className="text-sm font-medium text-primary">{cat.category}:</span>
-                          <div className="flex flex-wrap gap-1 mt-1">
-                            {cat.ingredients.map((ing, j) => (
-                              <Badge key={j} variant="secondary" className="text-xs">
-                                {ing}
-                              </Badge>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {selectedProduct.otherIngredients.length > 0 && (
-                  <div>
-                    <h4 className="font-semibold mb-2 text-sm text-muted-foreground uppercase tracking-wide">
-                      Other Ingredients
-                    </h4>
-                    <div className="space-y-3">
-                      {selectedProduct.otherIngredients.map((cat, i) => (
-                        <div key={i}>
-                          <span className="text-sm font-medium text-accent">{cat.category}:</span>
-                          <span className="text-sm text-muted-foreground ml-2">
-                            {cat.ingredients.join(', ')}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+                    <p className="text-sm font-mono text-muted-foreground">
+                      {selectedProduct.skinThroughIngredientNames.join(', ')}
+                    </p>
                   </div>
                 )}
 
