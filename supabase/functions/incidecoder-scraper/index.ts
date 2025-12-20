@@ -330,10 +330,7 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
         .replace(/\s+/g, ' ')
         .trim();
 
-      ingredientsOverviewList = cleaned
-        .split(',')
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
+      ingredientsOverviewList = smartSplitIngredients(cleaned);
     }
   }
 
@@ -543,4 +540,45 @@ function normalizeIngredientName(text: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
+}
+
+// Smart split ingredients: handles cases like "1, 2-Hexanediol" where comma is part of the name
+function smartSplitIngredients(text: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  const chars = text.split('');
+  
+  for (let i = 0; i < chars.length; i++) {
+    const char = chars[i];
+    
+    if (char === ',') {
+      // Check if this comma is part of an ingredient name like "1, 2-Hexanediol"
+      // Pattern: digit + comma + space + digit (e.g., "1, 2")
+      const prevChar = i > 0 ? chars[i - 1] : '';
+      const nextChars = text.slice(i + 1, i + 4); // Look ahead
+      
+      // If pattern is like ", 2-" where it's followed by space+digit+dash, it's part of the name
+      if (/^\d$/.test(prevChar) && /^\s*\d+-/.test(nextChars)) {
+        current += char;
+        continue;
+      }
+      
+      // Otherwise, this comma separates ingredients
+      const trimmed = current.trim();
+      if (trimmed.length > 0) {
+        result.push(trimmed);
+      }
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  
+  // Don't forget the last ingredient
+  const trimmed = current.trim();
+  if (trimmed.length > 0) {
+    result.push(trimmed);
+  }
+  
+  return result;
 }
