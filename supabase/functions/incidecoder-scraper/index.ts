@@ -266,56 +266,59 @@ Deno.serve(async (req) => {
 });
 
 function parseProductData(markdown: string, html: string, metadata: any, url: string): ScrapedProduct {
-  // Extract brand from page content - usually in the first lines
-  // Pattern: Brand name appears before product name, often as a link or header
+  // Extract brand from HTML - look for product-brand-title span with link inside
   let brand = 'Unknown';
   
-  // Try to find brand from markdown - usually appears at the top
-  // Format: "[Brand Name](/brands/brand-name)" or just "Brand Name" before product title
-  const brandLinkMatch = markdown.match(/\[([^\]]+)\]\(\/brands\/[^)]+\)/);
-  if (brandLinkMatch) {
-    brand = brandLinkMatch[1].trim();
+  // Primary: Extract from product-brand-title span (e.g., <span id="product-brand-title"><a href="/brands/de-latex">De Latex</a></span>)
+  const brandTitleMatch = html.match(/<span[^>]*id="product-brand-title"[^>]*>[\s\S]*?<a[^>]*>([^<]+)<\/a>[\s\S]*?<\/span>/i);
+  if (brandTitleMatch) {
+    brand = brandTitleMatch[1].trim();
   } else {
-    // Try from HTML - look for brand link
+    // Fallback: Try any link to /brands/
     const htmlBrandMatch = html.match(/<a[^>]*href="\/brands\/[^"]*"[^>]*>([^<]+)<\/a>/i);
     if (htmlBrandMatch) {
       brand = htmlBrandMatch[1].trim();
-    } else {
-      // Fallback: extract from URL
-      const urlParts = url.split('/products/')[1]?.split('-') || [];
-      brand = urlParts[0]?.replace(/\b\w/g, l => l.toUpperCase()) || 'Unknown';
     }
   }
 
-  // Extract product name from metadata or markdown
+  // Extract product name from metadata or HTML
   let name = metadata?.title?.replace(' ingredients (Explained)', '').replace(' | INCIDecoder', '').trim() || '';
   
-  // If name starts with brand, that's fine - keep the full name
+  // Also try to get product title from HTML for better accuracy
   if (!name) {
-    // Try to get from first heading in markdown
-    const headingMatch = markdown.match(/^#\s*(.+?)$/m);
-    name = headingMatch?.[1]?.trim() || 'Unknown Product';
+    const productTitleMatch = html.match(/<span[^>]*id="product-title"[^>]*>([^<]+)<\/span>/i);
+    if (productTitleMatch) {
+      name = `${brand} ${productTitleMatch[1].trim()}`;
+    } else {
+      const headingMatch = markdown.match(/^#\s*(.+?)$/m);
+      name = headingMatch?.[1]?.trim() || 'Unknown Product';
+    }
   }
 
-  // Extract description - the italic text after the product name
+  // Extract description from product-details span
   let description = '';
-  const descMatch = markdown.match(/\*([^*]+(?:sensitive skin|cleansing|moisturiz|hydrat|skin)[^*]*)\*/i);
-  if (descMatch) {
-    description = descMatch[1].trim();
+  const productDetailsMatch = html.match(/<span[^>]*id="product-details"[^>]*>([^<]*)<\/span>/i);
+  if (productDetailsMatch) {
+    description = productDetailsMatch[1].trim().replace(/^["'\s]+|["'\s]+$/g, '');
   } else {
-    // Try to find description from HTML
+    // Fallback: Try italic text or em tag
     const htmlDescMatch = html.match(/<em>([^<]+)<\/em>/i);
     if (htmlDescMatch) {
       description = htmlDescMatch[1].trim();
     }
   }
 
-  // Extract ingredients overview - the full comma-separated list
+  // Extract ingredients overview and clean up - remove markdown links, keep only ingredient names
   let ingredientsOverview = '';
   const overviewMatch = markdown.match(/Ingredients overview\s*\n+([^#]+?)(?=\n\s*(?:Read more|Save to list|Highlights|Key Ingredients|##))/is);
   if (overviewMatch) {
     ingredientsOverview = overviewMatch[1].trim()
       .replace(/\n+/g, ' ')
+      .replace(/\s+/g, ' ')
+      // Remove markdown links: [Text](url) -> Text
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      // Remove any remaining brackets or escaped brackets
+      .replace(/\\?\[|\\?\]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
   }
@@ -326,36 +329,30 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
   
   if (keySection) {
     const keyText = keySection[1];
-    // Parse categories like "Skin-identical ingredient:", "Soothing:", etc.
-    const categoryMatches = keyText.matchAll(/\*\*([^*:]+):\*\*\s*([^\n*]+(?:\n(?!\*\*)[^\n*]+)*)/g);
+    // Parse lines that have category pattern: **[Category](link):** or [Category](link):
+    // Format: [Skin-identical ingredient](url): [Glycerol](url)
+    const lines = keyText.split('\n').filter(l => l.trim());
     
-    for (const match of categoryMatches) {
-      const category = match[1].trim();
-      const ingredientsStr = match[2].trim();
-      // Split by comma and clean up
-      const ingredients = ingredientsStr
-        .split(/,\s*/)
-        .map(i => i.replace(/\[([^\]]+)\][^,]*/g, '$1').trim())
-        .filter(i => i.length > 0);
-      
-      if (ingredients.length > 0) {
-        keyIngredients.push({ category, ingredients });
-      }
-    }
-    
-    // Also try non-bold format
-    if (keyIngredients.length === 0) {
-      const altMatches = keyText.matchAll(/([A-Za-z-]+(?:\s+[a-z]+)?)\s*:\s*([^\n]+)/g);
-      for (const match of altMatches) {
-        const category = match[1].trim();
-        const ingredientsStr = match[2].trim();
-        const ingredients = ingredientsStr
-          .split(/,\s*/)
-          .map(i => i.replace(/\[([^\]]+)\][^,]*/g, '$1').trim())
-          .filter(i => i.length > 0);
-        
+    for (const line of lines) {
+      // Match pattern: [Category](url): ingredients
+      const categoryMatch = line.match(/\[([^\]]+)\]\([^)]+\)\s*:\s*(.+)/);
+      if (categoryMatch) {
+        const category = categoryMatch[1].trim();
+        const ingredientsStr = categoryMatch[2].trim();
+        // Extract ingredient names from markdown links
+        const ingredients = extractIngredientNames(ingredientsStr);
         if (ingredients.length > 0) {
           keyIngredients.push({ category, ingredients });
+        }
+      } else {
+        // Try bold format: **Category:** ingredients
+        const boldMatch = line.match(/\*\*([^*:]+):\*\*\s*(.+)/);
+        if (boldMatch) {
+          const category = boldMatch[1].trim();
+          const ingredients = extractIngredientNames(boldMatch[2].trim());
+          if (ingredients.length > 0) {
+            keyIngredients.push({ category, ingredients });
+          }
         }
       }
     }
@@ -367,35 +364,27 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
   
   if (otherSection) {
     const otherText = otherSection[1];
-    // Parse categories
-    const categoryMatches = otherText.matchAll(/\*\*([^*:]+):\*\*\s*([^\n*]+(?:\n(?!\*\*)[^\n*]+)*)/g);
+    const lines = otherText.split('\n').filter(l => l.trim());
     
-    for (const match of categoryMatches) {
-      const category = match[1].trim();
-      const ingredientsStr = match[2].trim();
-      const ingredients = ingredientsStr
-        .split(/,\s*/)
-        .map(i => i.replace(/\[([^\]]+)\][^,]*/g, '$1').trim())
-        .filter(i => i.length > 0);
-      
-      if (ingredients.length > 0) {
-        otherIngredients.push({ category, ingredients });
-      }
-    }
-    
-    // Also try non-bold format
-    if (otherIngredients.length === 0) {
-      const altMatches = otherText.matchAll(/([A-Za-z/]+(?:\s+[a-z]+)?)\s*:\s*([^\n]+)/g);
-      for (const match of altMatches) {
-        const category = match[1].trim();
-        const ingredientsStr = match[2].trim();
-        const ingredients = ingredientsStr
-          .split(/,\s*/)
-          .map(i => i.replace(/\[([^\]]+)\][^,]*/g, '$1').trim())
-          .filter(i => i.length > 0);
-        
+    for (const line of lines) {
+      // Match pattern: [Category](url): ingredients
+      const categoryMatch = line.match(/\[([^\]]+)\]\([^)]+\)\s*:\s*(.+)/);
+      if (categoryMatch) {
+        const category = categoryMatch[1].trim();
+        const ingredientsStr = categoryMatch[2].trim();
+        const ingredients = extractIngredientNames(ingredientsStr);
         if (ingredients.length > 0) {
           otherIngredients.push({ category, ingredients });
+        }
+      } else {
+        // Try bold format: **Category:** ingredients
+        const boldMatch = line.match(/\*\*([^*:]+):\*\*\s*(.+)/);
+        if (boldMatch) {
+          const category = boldMatch[1].trim();
+          const ingredients = extractIngredientNames(boldMatch[2].trim());
+          if (ingredients.length > 0) {
+            otherIngredients.push({ category, ingredients });
+          }
         }
       }
     }
@@ -430,11 +419,11 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
       
       if (cells.length >= 2) {
         skinThrough.push({
-          name: cells[0] || '',
-          whatItDoes: cells[1] || '',
-          irritancy: cells[2] || '-',
-          comedogenicity: cells[3] || '-',
-          idRating: cells[4] || '-',
+          name: cleanMarkdownLinks(cells[0] || ''),
+          whatItDoes: cleanMarkdownLinks(cells[1] || ''),
+          irritancy: cleanMarkdownLinks(cells[2] || '-'),
+          comedogenicity: cleanMarkdownLinks(cells[3] || '-'),
+          idRating: cleanMarkdownLinks(cells[4] || '-'),
         });
       }
     }
@@ -450,7 +439,7 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
       for (const rowMatch of rowMatches) {
         const rowHtml = rowMatch[1];
         const cells = [...rowHtml.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)]
-          .map(m => m[1].replace(/<[^>]+>/g, '').trim());
+          .map(m => m[1].replace(/<[^>]+>/g, '').replace(/<br\s*\/?>/gi, ', ').trim());
         
         // Skip header row
         if (cells[0]?.toLowerCase().includes('ingredient name')) continue;
@@ -502,4 +491,41 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
     otherIngredients,
     skinThrough,
   };
+}
+
+// Helper function to extract ingredient names from a string with markdown links
+function extractIngredientNames(text: string): string[] {
+  // Extract names from markdown links [Name](url) and plain text
+  const names: string[] = [];
+  
+  // First extract all [Name](url) patterns
+  const linkMatches = text.matchAll(/\[([^\]]+)\]\([^)]+\)/g);
+  for (const match of linkMatches) {
+    const name = match[1].trim();
+    if (name && !name.toLowerCase().includes('more') && name.length > 1) {
+      names.push(name);
+    }
+  }
+  
+  // If no links found, split by comma and clean
+  if (names.length === 0) {
+    const parts = text.split(/,\s*/);
+    for (const part of parts) {
+      const cleaned = part.replace(/\[([^\]]+)\][^,]*/g, '$1').trim();
+      if (cleaned && cleaned.length > 1) {
+        names.push(cleaned);
+      }
+    }
+  }
+  
+  return names;
+}
+
+// Helper function to clean markdown links: [Text](url) -> Text
+function cleanMarkdownLinks(text: string): string {
+  return text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/<br\s*\/?>/gi, ', ')
+    .replace(/\\?\[|\\?\]/g, '')
+    .trim();
 }
