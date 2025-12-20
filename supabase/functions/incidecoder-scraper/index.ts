@@ -299,147 +299,158 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
     }
   }
 
-  // Extract ingredients overview and clean up - remove markdown links, keep only ingredient names
+  // Extract ingredients overview as a list of ingredient names (avoid "more/less" artifacts)
   let ingredientsOverview = '';
-  const overviewMatch = markdown.match(/Ingredients overview\s*\n+([^#]+?)(?=\n\s*(?:Read more|Save to list|Highlights|Key Ingredients|##))/is);
+  let ingredientsOverviewList: string[] = [];
+
+  const overviewMatch = markdown.match(
+    /Ingredients overview\s*\n+([^#]+?)(?=\n\s*(?:Read more|Save to list|Highlights|##))/is
+  );
+
   if (overviewMatch) {
-    ingredientsOverview = overviewMatch[1].trim()
+    const overviewRaw = overviewMatch[1]
       .replace(/\n+/g, ' ')
       .replace(/\s+/g, ' ')
-      // Remove markdown links: [Text](url) -> Text
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-      // Remove any remaining brackets or escaped brackets
-      .replace(/\\?\[|\\?\]/g, '')
-      // Remove "more" and "less" artifacts
-      .replace(/\bmore\b/gi, '')
-      .replace(/\bless\b/gi, '')
-      .replace(/\s+/g, ' ')
       .trim();
+
+    // Prefer extracting from ingredient links: [Water](https://incidecoder.com/ingredients/water)
+    const linkMatches = [...overviewRaw.matchAll(/\[([^\]]+)\]\((?:https?:\/\/)?(?:www\.)?incidecoder\.com\/ingredients\/[^)]+\)\)/gi)];
+
+    if (linkMatches.length > 0) {
+      ingredientsOverviewList = linkMatches
+        .map((m) => m[1].trim())
+        .filter((s) => s.length > 0 && !/^(more|less)$/i.test(s));
+    } else {
+      // Fallback: strip links and remove "more/less" even when glued to the next word (e.g. "moreAcrylates")
+      const cleaned = overviewRaw
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .replace(/\\?\[|\\?\]/g, '')
+        .replace(/more(?=[A-Za-z0-9])/gi, '')
+        .replace(/\bless\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      ingredientsOverviewList = cleaned
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    }
   }
 
-  // Count ingredients in overview (split by comma)
-  const ingredientsOverviewList = ingredientsOverview
-    .split(',')
-    .map(s => s.trim())
-    .filter(s => s.length > 0);
+  ingredientsOverview = ingredientsOverviewList.join(', ');
   const ingredientsOverviewCount = ingredientsOverviewList.length;
 
   // Extract Skim Through / Skin Through table from HTML (more reliable)
   const skinThrough: SkinThroughItem[] = [];
-  
+
   // Parse from HTML table - the table has class "ingredtable"
   const tableMatch = html.match(/<table[^>]*class="[^"]*ingredtable[^"]*"[^>]*>([\s\S]*?)<\/table>/i);
   if (tableMatch) {
     const tableHtml = tableMatch[1];
     const rowMatches = [...tableHtml.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
-    
+
     for (const rowMatch of rowMatches) {
       const rowHtml = rowMatch[1];
-      const cells = [...rowHtml.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)]
-        .map(m => {
-          // Extract text content, handling links and br tags
-          let text = m[1];
-          // Extract link text
-          text = text.replace(/<a[^>]*>([^<]*)<\/a>/g, '$1');
-          // Replace br tags with comma
-          text = text.replace(/<br\s*\/?>/gi, ', ');
-          // Remove all other HTML tags
-          text = text.replace(/<[^>]+>/g, '');
-          // Clean up whitespace
-          text = text.replace(/\s+/g, ' ').trim();
-          return text || '-';
-        });
-      
-      // Skip header row
-      if (cells[0]?.toLowerCase().includes('ingredient name')) continue;
-      if (cells.length < 2) continue;
-      
-      // Table columns: Ingredient name | what-it-does | irr., com. | ID-Rating
-      // Note: irr., com. is a SINGLE column with both values
+
+      // Skip header rows
+      if (/<th/i.test(rowHtml) || /ingredient\s*name/i.test(rowHtml)) continue;
+
+      const tdMatches = [...rowHtml.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)];
+      if (tdMatches.length === 0) continue;
+
+      const cells = tdMatches.map((m) => htmlCellToText(m[1]));
+
       const ingredientName = cells[0] || '-';
       const whatItDoes = cells[1] || '-';
-      const irrCom = cells[2] || '-';
-      const idRating = cells[3] || '-';
-      
-      // Parse irr., com. column - it contains "0, 0" or just a single value or "-"
-      let irritancy = '-';
-      let comedogenicity = '-';
-      
-      if (irrCom && irrCom !== '-') {
-        const parts = irrCom.split(',').map(s => s.trim());
-        if (parts.length >= 2) {
-          irritancy = parts[0] || '-';
-          comedogenicity = parts[1] || '-';
+
+      let irrComText = cells[2] || '-';
+      let idRating = cells[3] || '-';
+
+      // Some rows can come back with only 3 cells; decide whether the 3rd is ID-Rating or irr/com.
+      if (cells.length === 3) {
+        if (looksLikeRating(cells[2])) {
+          irrComText = '-';
+          idRating = cells[2];
         } else {
-          irritancy = parts[0] || '-';
+          irrComText = cells[2];
+          idRating = '-';
         }
       }
-      
+
+      const { irritancy, comedogenicity } = parseIrrCom(irrComText);
+
       skinThrough.push({
         name: ingredientName,
-        whatItDoes: whatItDoes,
-        irritancy: irritancy,
-        comedogenicity: comedogenicity,
-        idRating: idRating,
+        whatItDoes,
+        irritancy,
+        comedogenicity,
+        idRating: normalizeIdRating(idRating),
       });
     }
   }
-  
+
   // Fallback: Try to parse from markdown if HTML parsing didn't work
   if (skinThrough.length === 0) {
-    // Look for the full Skim through section (not stopping at [more])
-    const skimSection = markdown.match(/Skim through\s*\n+([\s\S]*?)(?=\n\s*##|\n\s*---|\n\s*\*\*[A-Z]|$)/i);
-    
+    const skimSection = markdown.match(
+      /Skim through\s*\n+([\s\S]*?)(?=\n\s*##|\n\s*---|\n\s*\*\*[A-Z]|$)/i
+    );
+
     if (skimSection) {
       const tableText = skimSection[1];
-      
-      // Try to parse markdown table
-      const tableRows = tableText.split('\n').filter(row => row.includes('|'));
-      
-      // Skip header rows
+      const tableRows = tableText.split('\n').filter((row) => row.includes('|'));
+
       let dataStarted = false;
       for (const row of tableRows) {
-        // Skip separator row
         if (row.match(/^\|[-:\s|]+\|$/)) {
           dataStarted = true;
           continue;
         }
-        
+
         if (!dataStarted && row.toLowerCase().includes('ingredient')) {
-          continue; // Skip header
+          continue;
         }
-        
-        const cells = row.split('|').map(c => c.trim()).filter(c => c);
-        
-        if (cells.length >= 2) {
-          const irrCom = cleanMarkdownLinks(cells[2] || '-');
-          let irritancy = '-';
-          let comedogenicity = '-';
-          
-          if (irrCom && irrCom !== '-') {
-            const parts = irrCom.split(',').map(s => s.trim());
-            if (parts.length >= 2) {
-              irritancy = parts[0] || '-';
-              comedogenicity = parts[1] || '-';
-            } else {
-              irritancy = parts[0] || '-';
-            }
-          }
-          
+
+        // Keep empty cells to preserve column positions
+        const parts = row.split('|').slice(1, -1).map((c) => c.trim());
+        if (parts.length < 1) continue;
+
+        const nameCell = cleanMarkdownLinks(parts[0] || '-');
+        const whatCell = cleanMarkdownLinks(parts[1] || '-');
+        const irrComCell = cleanMarkdownLinks(parts[2] || '-');
+        const idCell = cleanMarkdownLinks(parts[3] || '-');
+
+        if (nameCell && nameCell !== '-') {
+          const { irritancy, comedogenicity } = parseIrrCom(irrComCell);
           skinThrough.push({
-            name: cleanMarkdownLinks(cells[0] || ''),
-            whatItDoes: cleanMarkdownLinks(cells[1] || ''),
-            irritancy: irritancy,
-            comedogenicity: comedogenicity,
-            idRating: cleanMarkdownLinks(cells[3] || '-'),
+            name: nameCell,
+            whatItDoes: whatCell,
+            irritancy,
+            comedogenicity,
+            idRating: normalizeIdRating(idCell),
           });
         }
       }
     }
   }
 
+  // Ensure we include any Ingredients overview items even if the table row has no details
+  const normalizedSkinNames = new Set(skinThrough.map((i) => normalizeIngredientName(i.name)));
+  for (const ing of ingredientsOverviewList) {
+    const norm = normalizeIngredientName(ing);
+    if (!norm || normalizedSkinNames.has(norm)) continue;
+
+    skinThrough.push({
+      name: ing,
+      whatItDoes: '-',
+      irritancy: '-',
+      comedogenicity: '-',
+      idRating: '-',
+    });
+    normalizedSkinNames.add(norm);
+  }
+
   // Extract ingredient names from skinThrough for comparison
-  const skinThroughIngredientNames = skinThrough.map(item => item.name);
+  const skinThroughIngredientNames = skinThrough.map((item) => item.name);
   const skinThroughCount = skinThroughIngredientNames.length;
 
   return {
@@ -457,9 +468,79 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
 
 // Helper function to clean markdown links: [Text](url) -> Text
 function cleanMarkdownLinks(text: string): string {
-  return text
+  let t = (text ?? '')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/<br\s*\/?>/gi, ', ')
     .replace(/\\?\[|\\?\]/g, '')
+    .replace(/\s+/g, ' ')
     .trim();
+
+  t = t
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/(?:,\s*){2,}/g, ', ')
+    .replace(/,\s*$/g, '');
+
+  return t || '-';
+}
+
+function htmlCellToText(cellHtml: string): string {
+  let t = (cellHtml ?? '')
+    .replace(/<br\s*\/?>/gi, ', ')
+    .replace(/<a[^>]*>([\s\S]*?)<\/a>/gi, '$1')
+    .replace(/&nbsp;|&#160;/gi, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  t = t
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/(?:,\s*){2,}/g, ', ')
+    .replace(/,\s*$/g, '');
+
+  return t || '-';
+}
+
+function parseIrrCom(text: string): { irritancy: string; comedogenicity: string } {
+  const t = (text ?? '').trim();
+  if (!t || t === '-') return { irritancy: '-', comedogenicity: '-' };
+
+  const nums = t.match(/\d+/g);
+  if (nums && nums.length >= 2) {
+    return { irritancy: nums[0] ?? '-', comedogenicity: nums[1] ?? '-' };
+  }
+  if (nums && nums.length === 1) {
+    return { irritancy: nums[0] ?? '-', comedogenicity: '-' };
+  }
+
+  return { irritancy: '-', comedogenicity: '-' };
+}
+
+function looksLikeRating(text: string): boolean {
+  const t = (text ?? '').trim();
+  if (!t || t === '-') return false;
+  const lower = t.toLowerCase();
+  return ['superstar', 'goodie', 'average', 'badie'].includes(lower);
+}
+
+function normalizeIdRating(text: string): string {
+  const t = (text ?? '').trim();
+  if (!t || t === '-') return '-';
+
+  const lower = t.toLowerCase();
+  if (['superstar', 'goodie', 'average', 'badie'].includes(lower)) {
+    return lower.charAt(0).toUpperCase() + lower.slice(1);
+  }
+
+  return t;
+}
+
+function normalizeIngredientName(text: string): string {
+  return (text ?? '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
 }
