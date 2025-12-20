@@ -9,8 +9,8 @@ interface StatsCardsProps {
 export function StatsCards({ products }: StatsCardsProps) {
   const totalProducts = products.length;
   const uniqueBrands = new Set(products.map((p) => p.brand)).size;
-  const totalKeyIngredients = products.reduce((sum, p) => sum + p.keyIngredients.length, 0);
-  const totalSkinThrough = products.reduce((sum, p) => sum + p.skinThrough.length, 0);
+  const totalIngredientsOverview = products.reduce((sum, p) => sum + p.ingredientsOverviewCount, 0);
+  const totalSkinThrough = products.reduce((sum, p) => sum + p.skinThroughCount, 0);
 
   const stats = [
     {
@@ -26,8 +26,8 @@ export function StatsCards({ products }: StatsCardsProps) {
       color: 'text-accent',
     },
     {
-      label: 'Key Ingredients',
-      value: totalKeyIngredients.toLocaleString(),
+      label: 'Total Ingredients (Overview)',
+      value: totalIngredientsOverview.toLocaleString(),
       icon: FlaskConical,
       color: 'text-success',
     },

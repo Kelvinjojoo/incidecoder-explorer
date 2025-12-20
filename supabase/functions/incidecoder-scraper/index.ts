@@ -3,16 +3,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-interface KeyIngredientCategory {
-  category: string;
-  ingredients: string[];
-}
-
-interface OtherIngredientCategory {
-  category: string;
-  ingredients: string[];
-}
-
 interface SkinThroughItem {
   name: string;
   whatItDoes: string;
@@ -27,9 +17,10 @@ interface ScrapedProduct {
   brand: string;
   description: string;
   ingredientsOverview: string;
-  keyIngredients: KeyIngredientCategory[];
-  otherIngredients: OtherIngredientCategory[];
+  ingredientsOverviewCount: number;
   skinThrough: SkinThroughItem[];
+  skinThroughIngredientNames: string[];
+  skinThroughCount: number;
 }
 
 Deno.serve(async (req) => {
@@ -319,167 +310,137 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
       .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
       // Remove any remaining brackets or escaped brackets
       .replace(/\\?\[|\\?\]/g, '')
+      // Remove "more" and "less" artifacts
+      .replace(/\bmore\b/gi, '')
+      .replace(/\bless\b/gi, '')
       .replace(/\s+/g, ' ')
       .trim();
   }
 
-  // Extract Key Ingredients with categories
-  const keyIngredients: KeyIngredientCategory[] = [];
-  const keySection = markdown.match(/Key Ingredients\s*\n+([\s\S]*?)(?=\n\s*(?:Show all ingredients|Other Ingredients|##|$))/i);
-  
-  if (keySection) {
-    const keyText = keySection[1];
-    // Parse lines that have category pattern: **[Category](link):** or [Category](link):
-    // Format: [Skin-identical ingredient](url): [Glycerol](url)
-    const lines = keyText.split('\n').filter(l => l.trim());
-    
-    for (const line of lines) {
-      // Match pattern: [Category](url): ingredients
-      const categoryMatch = line.match(/\[([^\]]+)\]\([^)]+\)\s*:\s*(.+)/);
-      if (categoryMatch) {
-        const category = categoryMatch[1].trim();
-        const ingredientsStr = categoryMatch[2].trim();
-        // Extract ingredient names from markdown links
-        const ingredients = extractIngredientNames(ingredientsStr);
-        if (ingredients.length > 0) {
-          keyIngredients.push({ category, ingredients });
-        }
-      } else {
-        // Try bold format: **Category:** ingredients
-        const boldMatch = line.match(/\*\*([^*:]+):\*\*\s*(.+)/);
-        if (boldMatch) {
-          const category = boldMatch[1].trim();
-          const ingredients = extractIngredientNames(boldMatch[2].trim());
-          if (ingredients.length > 0) {
-            keyIngredients.push({ category, ingredients });
-          }
-        }
-      }
-    }
-  }
+  // Count ingredients in overview (split by comma)
+  const ingredientsOverviewList = ingredientsOverview
+    .split(',')
+    .map(s => s.trim())
+    .filter(s => s.length > 0);
+  const ingredientsOverviewCount = ingredientsOverviewList.length;
 
-  // Extract Other Ingredients with categories
-  const otherIngredients: OtherIngredientCategory[] = [];
-  const otherSection = markdown.match(/Other Ingredients\s*\n+([\s\S]*?)(?=\n\s*(?:Skim through|Skim Through|##|$))/i);
-  
-  if (otherSection) {
-    const otherText = otherSection[1];
-    const lines = otherText.split('\n').filter(l => l.trim());
-    
-    for (const line of lines) {
-      // Match pattern: [Category](url): ingredients
-      const categoryMatch = line.match(/\[([^\]]+)\]\([^)]+\)\s*:\s*(.+)/);
-      if (categoryMatch) {
-        const category = categoryMatch[1].trim();
-        const ingredientsStr = categoryMatch[2].trim();
-        const ingredients = extractIngredientNames(ingredientsStr);
-        if (ingredients.length > 0) {
-          otherIngredients.push({ category, ingredients });
-        }
-      } else {
-        // Try bold format: **Category:** ingredients
-        const boldMatch = line.match(/\*\*([^*:]+):\*\*\s*(.+)/);
-        if (boldMatch) {
-          const category = boldMatch[1].trim();
-          const ingredients = extractIngredientNames(boldMatch[2].trim());
-          if (ingredients.length > 0) {
-            otherIngredients.push({ category, ingredients });
-          }
-        }
-      }
-    }
-  }
-
-  // Extract Skim Through / Skin Through table
+  // Extract Skim Through / Skin Through table from HTML (more reliable)
   const skinThrough: SkinThroughItem[] = [];
   
-  // Look for the Skim through section with table
-  const skimSection = markdown.match(/Skim through\s*\n+([\s\S]*?)(?=\n\s*(?:\[more\]|##|$))/i);
-  
-  if (skimSection) {
-    const tableText = skimSection[1];
+  // Parse from HTML table - the table has class "ingredtable"
+  const tableMatch = html.match(/<table[^>]*class="[^"]*ingredtable[^"]*"[^>]*>([\s\S]*?)<\/table>/i);
+  if (tableMatch) {
+    const tableHtml = tableMatch[1];
+    const rowMatches = [...tableHtml.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
     
-    // Try to parse markdown table
-    const tableRows = tableText.split('\n').filter(row => row.includes('|'));
-    
-    // Skip header rows
-    let dataStarted = false;
-    for (const row of tableRows) {
-      // Skip separator row
-      if (row.match(/^\|[-:\s|]+\|$/)) {
-        dataStarted = true;
-        continue;
-      }
-      
-      if (!dataStarted && row.toLowerCase().includes('ingredient')) {
-        continue; // Skip header
-      }
-      
-      const cells = row.split('|').map(c => c.trim()).filter(c => c);
-      
-      if (cells.length >= 2) {
-        skinThrough.push({
-          name: cleanMarkdownLinks(cells[0] || ''),
-          whatItDoes: cleanMarkdownLinks(cells[1] || ''),
-          irritancy: cleanMarkdownLinks(cells[2] || '-'),
-          comedogenicity: cleanMarkdownLinks(cells[3] || '-'),
-          idRating: cleanMarkdownLinks(cells[4] || '-'),
+    for (const rowMatch of rowMatches) {
+      const rowHtml = rowMatch[1];
+      const cells = [...rowHtml.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)]
+        .map(m => {
+          // Extract text content, handling links and br tags
+          let text = m[1];
+          // Extract link text
+          text = text.replace(/<a[^>]*>([^<]*)<\/a>/g, '$1');
+          // Replace br tags with comma
+          text = text.replace(/<br\s*\/?>/gi, ', ');
+          // Remove all other HTML tags
+          text = text.replace(/<[^>]+>/g, '');
+          // Clean up whitespace
+          text = text.replace(/\s+/g, ' ').trim();
+          return text || '-';
         });
+      
+      // Skip header row
+      if (cells[0]?.toLowerCase().includes('ingredient name')) continue;
+      if (cells.length < 2) continue;
+      
+      // Table columns: Ingredient name | what-it-does | irr., com. | ID-Rating
+      // Note: irr., com. is a SINGLE column with both values
+      const ingredientName = cells[0] || '-';
+      const whatItDoes = cells[1] || '-';
+      const irrCom = cells[2] || '-';
+      const idRating = cells[3] || '-';
+      
+      // Parse irr., com. column - it contains "0, 0" or just a single value or "-"
+      let irritancy = '-';
+      let comedogenicity = '-';
+      
+      if (irrCom && irrCom !== '-') {
+        const parts = irrCom.split(',').map(s => s.trim());
+        if (parts.length >= 2) {
+          irritancy = parts[0] || '-';
+          comedogenicity = parts[1] || '-';
+        } else {
+          irritancy = parts[0] || '-';
+        }
       }
+      
+      skinThrough.push({
+        name: ingredientName,
+        whatItDoes: whatItDoes,
+        irritancy: irritancy,
+        comedogenicity: comedogenicity,
+        idRating: idRating,
+      });
     }
   }
   
-  // Alternative: Try to parse from HTML table if markdown parsing didn't work
+  // Fallback: Try to parse from markdown if HTML parsing didn't work
   if (skinThrough.length === 0) {
-    const tableMatch = html.match(/<table[^>]*class="[^"]*ingredtable[^"]*"[^>]*>([\s\S]*?)<\/table>/i);
-    if (tableMatch) {
-      const tableHtml = tableMatch[1];
-      const rowMatches = tableHtml.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi);
+    // Look for the full Skim through section (not stopping at [more])
+    const skimSection = markdown.match(/Skim through\s*\n+([\s\S]*?)(?=\n\s*##|\n\s*---|\n\s*\*\*[A-Z]|$)/i);
+    
+    if (skimSection) {
+      const tableText = skimSection[1];
       
-      for (const rowMatch of rowMatches) {
-        const rowHtml = rowMatch[1];
-        const cells = [...rowHtml.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)]
-          .map(m => m[1].replace(/<[^>]+>/g, '').replace(/<br\s*\/?>/gi, ', ').trim());
+      // Try to parse markdown table
+      const tableRows = tableText.split('\n').filter(row => row.includes('|'));
+      
+      // Skip header rows
+      let dataStarted = false;
+      for (const row of tableRows) {
+        // Skip separator row
+        if (row.match(/^\|[-:\s|]+\|$/)) {
+          dataStarted = true;
+          continue;
+        }
         
-        // Skip header row
-        if (cells[0]?.toLowerCase().includes('ingredient name')) continue;
+        if (!dataStarted && row.toLowerCase().includes('ingredient')) {
+          continue; // Skip header
+        }
+        
+        const cells = row.split('|').map(c => c.trim()).filter(c => c);
         
         if (cells.length >= 2) {
+          const irrCom = cleanMarkdownLinks(cells[2] || '-');
+          let irritancy = '-';
+          let comedogenicity = '-';
+          
+          if (irrCom && irrCom !== '-') {
+            const parts = irrCom.split(',').map(s => s.trim());
+            if (parts.length >= 2) {
+              irritancy = parts[0] || '-';
+              comedogenicity = parts[1] || '-';
+            } else {
+              irritancy = parts[0] || '-';
+            }
+          }
+          
           skinThrough.push({
-            name: cells[0] || '',
-            whatItDoes: cells[1] || '',
-            irritancy: cells[2] || '-',
-            comedogenicity: cells[3] || '-', 
-            idRating: cells[4] || '-',
+            name: cleanMarkdownLinks(cells[0] || ''),
+            whatItDoes: cleanMarkdownLinks(cells[1] || ''),
+            irritancy: irritancy,
+            comedogenicity: comedogenicity,
+            idRating: cleanMarkdownLinks(cells[3] || '-'),
           });
         }
       }
     }
   }
-  
-  // If still no skim through data, try to extract from ingredient list in markdown
-  if (skinThrough.length === 0) {
-    // Try to find ingredient entries with what-it-does info
-    const ingredientMatches = markdown.matchAll(/\[([^\]]+)\]\([^)]+\)\s*([a-z/,\s]+)(?:\s*(\d+,\s*\d+))?\s*(\w+)?/gi);
-    
-    for (const match of ingredientMatches) {
-      const name = match[1].trim();
-      const whatItDoes = match[2].trim();
-      const irrCom = match[3]?.trim() || '-';
-      const rating = match[4]?.trim() || '-';
-      
-      if (name && whatItDoes && !name.toLowerCase().includes('more')) {
-        const [irr, com] = irrCom.split(',').map(s => s.trim());
-        skinThrough.push({
-          name,
-          whatItDoes,
-          irritancy: irr || '-',
-          comedogenicity: com || '-',
-          idRating: rating,
-        });
-      }
-    }
-  }
+
+  // Extract ingredient names from skinThrough for comparison
+  const skinThroughIngredientNames = skinThrough.map(item => item.name);
+  const skinThroughCount = skinThroughIngredientNames.length;
 
   return {
     name,
@@ -487,38 +448,11 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
     brand,
     description,
     ingredientsOverview,
-    keyIngredients,
-    otherIngredients,
+    ingredientsOverviewCount,
     skinThrough,
+    skinThroughIngredientNames,
+    skinThroughCount,
   };
-}
-
-// Helper function to extract ingredient names from a string with markdown links
-function extractIngredientNames(text: string): string[] {
-  // Extract names from markdown links [Name](url) and plain text
-  const names: string[] = [];
-  
-  // First extract all [Name](url) patterns
-  const linkMatches = text.matchAll(/\[([^\]]+)\]\([^)]+\)/g);
-  for (const match of linkMatches) {
-    const name = match[1].trim();
-    if (name && !name.toLowerCase().includes('more') && name.length > 1) {
-      names.push(name);
-    }
-  }
-  
-  // If no links found, split by comma and clean
-  if (names.length === 0) {
-    const parts = text.split(/,\s*/);
-    for (const part of parts) {
-      const cleaned = part.replace(/\[([^\]]+)\][^,]*/g, '$1').trim();
-      if (cleaned && cleaned.length > 1) {
-        names.push(cleaned);
-      }
-    }
-  }
-  
-  return names;
 }
 
 // Helper function to clean markdown links: [Text](url) -> Text
