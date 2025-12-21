@@ -233,15 +233,16 @@ Deno.serve(async (req) => {
         }),
       });
 
-      const data = await response.json();
-      
       if (!response.ok) {
-        console.error('Firecrawl API error:', data);
+        const errorText = await response.text();
+        console.error('Firecrawl API error:', response.status, errorText);
         return new Response(
-          JSON.stringify({ success: false, error: data.error || 'Failed to scrape product' }),
-          { status: response.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          JSON.stringify({ success: false, error: `Firecrawl error (${response.status}): ${errorText.substring(0, 100)}` }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
+
+      const data = await response.json();
 
       const markdown = data.data?.markdown || '';
       const html = data.data?.html || '';
