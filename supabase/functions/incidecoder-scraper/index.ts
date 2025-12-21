@@ -390,12 +390,29 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
         .replace(/\\?\[|\\?\]/g, '')
         .replace(/more(?=[A-Za-z0-9])/gi, '')
         .replace(/\bless\b/gi, '')
+        // Remove warning text and UI elements that may appear at the end
+        .replace(/\s*Warning:.*$/i, '')
+        .replace(/\s*!Compare.*$/i, '')
+        .replace(/\s*!Report\s*Error.*$/i, '')
+        .replace(/\s*!Embed.*$/i, '')
+        .replace(/\s*Read\s+here\s+for\s+more\s+detail\.?/gi, '')
         .replace(/\s+/g, ' ')
         .trim();
 
       ingredientsOverviewList = smartSplitIngredients(cleaned).map(cleanIngredientName);
     }
   }
+
+  // Post-process: merge split concentration tokens like ["Extract 10", "000Ppm"] -> ["Extract [10,000Ppm]"]
+  ingredientsOverviewList = mergeConcentrationTokens(ingredientsOverviewList);
+
+  // Filter out empty or junk entries
+  ingredientsOverviewList = ingredientsOverviewList.filter((ing) => {
+    if (!ing || ing.length === 0) return false;
+    // Filter out pure concentration suffixes that shouldn't be standalone
+    if (/^\d{3,}Ppm$/i.test(ing)) return false;
+    return true;
+  });
 
   const ingredientsOverviewCount = ingredientsOverviewList.length;
 
@@ -596,15 +613,21 @@ function normalizeIdRating(text: string): string {
   return t;
 }
 
-// Clean ingredient name for display (removes escape chars, normalizes slashes)
+// Clean ingredient name for display (removes escape chars, normalizes slashes, UI junk)
 function cleanIngredientName(text: string): string {
   return (text ?? '')
     .replace(/[\u200B-\u200D\uFEFF]/g, '') // Remove zero-width chars
     .replace(/\\+,?\s*/g, '') // Remove escape chars like \\, \, \\\\
-    // Remove any trailing ingredient URL that sometimes leaks into text (e.g. "(https: / /incidecoder.com /ingredients /...)" )
+    // Remove any trailing ingredient URL that sometimes leaks into text
     .replace(/\(\s*https?\s*:\s*\/\s*\/[^)]+\)/gi, '')
+    // Remove warning text and UI buttons that may leak into ingredient names
+    .replace(/\s*Warning:.*$/i, '')
+    .replace(/\s*!Compare.*$/i, '')
+    .replace(/\s*!Report\s*Error.*$/i, '')
+    .replace(/\s*!Embed.*$/i, '')
+    .replace(/\s*Read\s+here\s+for\s+more\s+detail\.?/gi, '')
     // Normalize slash spacing (remove hidden chars)
-    .replace(/\s*\/\s*​*/g, ' /')
+    .replace(/\s*\/\s*​*/g, '/')
     .replace(/​/g, '') // Remove zero-width space (U+200B)
     // Fix commas used inside names
     .replace(/\s*,\s*(?=\d+-)/g, ',') // "1, 2-" -> "1,2-"
@@ -613,6 +636,33 @@ function cleanIngredientName(text: string): string {
     .replace(/(?<!\[)(\b\d{1,3}(?:,\d{3})+)\s*Ppm\b/gi, '[$1Ppm]')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+// Merge split concentration tokens: ["Extract 10", "000Ppm"] -> ["Extract [10,000Ppm]"]
+function mergeConcentrationTokens(ingredients: string[]): string[] {
+  const result: string[] = [];
+  let i = 0;
+
+  while (i < ingredients.length) {
+    const current = ingredients[i];
+    const next = ingredients[i + 1];
+
+    // Check if current ends with a number and next starts with digits+Ppm (e.g., "Extract 10" + "000Ppm")
+    if (next && /\s+\d+$/.test(current) && /^\d{3,}Ppm$/i.test(next)) {
+      // Merge them: "Extract 10" + "000Ppm" -> "Extract [10,000Ppm]"
+      const merged = current.replace(/\s+(\d+)$/, (_, num) => {
+        const fullNumber = num + ',' + next.replace(/Ppm$/i, '');
+        return ` [${fullNumber}Ppm]`;
+      });
+      result.push(merged);
+      i += 2; // Skip both tokens
+    } else {
+      result.push(current);
+      i++;
+    }
+  }
+
+  return result;
 }
 
 function normalizeIngredientName(text: string): string {
