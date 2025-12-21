@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { scraperApi, type ScrapedProduct, type Brand, type ProductLink } from '@/lib/api/scraper';
 import type { LogEntry } from '@/components/LogPanel';
+import type { PageData, PageBrand } from '@/components/PagesPanel';
 
 interface Progress {
   current: number;
@@ -14,6 +15,7 @@ export function useScraper() {
   const [isPaused, setIsPaused] = useState(false);
   const [progress, setProgress] = useState<Progress>({ current: 0, total: 0, phase: 'Idle' });
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [pages, setPages] = useState<PageData[]>([]);
 
   const pauseRef = useRef(false);
   const abortRef = useRef(false);
@@ -36,151 +38,177 @@ export function useScraper() {
     }
   };
 
-  const startScraping = useCallback(async (limit?: number) => {
+  const startScraping = useCallback(async (startOffset: number, endOffset: number, productLimit?: number) => {
     setIsRunning(true);
     setIsPaused(false);
     pauseRef.current = false;
     abortRef.current = false;
     setProducts([]);
     setLogs([]);
+    setPages([]);
 
-    addLog('info', 'Starting INCIDecoder scraper...');
+    addLog('info', `Starting INCIDecoder scraper for offsets ${startOffset} to ${endOffset}...`);
 
     try {
-      // Phase 1: Get all brands from all pages
-      setProgress({ current: 0, total: 0, phase: 'Fetching brand pages...' });
-      addLog('info', 'Fetching all brands from INCIDecoder (all pages)...');
-
-      const allBrands: Brand[] = [];
-      let pageOffset = 0;
-      let hasMore = true;
-      let pageCount = 0;
-
-      while (hasMore && !abortRef.current) {
+      // Phase 1: Fetch all brand pages in the range
+      const pageDataList: PageData[] = [];
+      
+      for (let offset = startOffset; offset <= endOffset; offset++) {
         await waitWhilePaused();
         if (abortRef.current) break;
 
-        pageCount++;
-        setProgress({ current: pageCount, total: 0, phase: `Fetching brand page ${pageCount} (offset=${pageOffset})...` });
-        addLog('info', `Fetching brand page ${pageCount} (offset=${pageOffset})...`);
+        setProgress({ 
+          current: offset - startOffset + 1, 
+          total: endOffset - startOffset + 1, 
+          phase: `Fetching brand page ${offset + 1} (offset=${offset})...` 
+        });
+        addLog('info', `Fetching brand page (offset=${offset})...`);
 
-        const brandsResult = await scraperApi.getBrandsPage(pageOffset);
+        const brandsResult = await scraperApi.getBrandsPage(offset);
         
         if (!brandsResult.success) {
-          addLog('warning', `Failed to fetch page ${pageCount}: ${brandsResult.error}`);
-          break;
+          addLog('warning', `Failed to fetch page offset=${offset}: ${brandsResult.error}`);
+          continue;
         }
 
         const pageBrands = brandsResult.brands || [];
         
         if (pageBrands.length === 0) {
-          addLog('info', `No more brands found on page ${pageCount}. Total pages: ${pageCount - 1}`);
-          hasMore = false;
-        } else {
-          allBrands.push(...pageBrands);
-          addLog('success', `Page ${pageCount}: Found ${pageBrands.length} brands (Total: ${allBrands.length})`);
-          pageOffset++;
+          addLog('info', `No brands found on offset=${offset}. Skipping.`);
+          continue;
+        }
+
+        const pageData: PageData = {
+          offset,
+          brands: pageBrands.map(b => ({ 
+            name: b.name, 
+            url: b.url, 
+            isScraped: false,
+            productCount: 0
+          })),
+          isComplete: false,
+          isCurrentlyProcessing: false,
+          products: [],
+        };
+
+        pageDataList.push(pageData);
+        setPages([...pageDataList]);
+        addLog('success', `Offset ${offset}: Found ${pageBrands.length} brands`);
+        
+        await sleep(300);
+      }
+
+      if (abortRef.current) {
+        addLog('warning', 'Scraping aborted during page fetching');
+        setIsRunning(false);
+        return;
+      }
+
+      addLog('success', `Loaded ${pageDataList.length} pages with brands`);
+
+      // Phase 2: Process each page - get products and scrape them
+      for (let pageIdx = 0; pageIdx < pageDataList.length; pageIdx++) {
+        if (abortRef.current) break;
+
+        const currentPage = pageDataList[pageIdx];
+        
+        // Mark page as currently processing
+        pageDataList[pageIdx] = { ...currentPage, isCurrentlyProcessing: true };
+        setPages([...pageDataList]);
+
+        addLog('info', `Processing page offset=${currentPage.offset} (${currentPage.brands.length} brands)...`);
+
+        const pageProducts: ScrapedProduct[] = [];
+
+        // Process each brand on this page
+        for (let brandIdx = 0; brandIdx < currentPage.brands.length; brandIdx++) {
+          await waitWhilePaused();
+          if (abortRef.current) break;
+
+          const brand = currentPage.brands[brandIdx];
           
-          // Rate limiting between page fetches
-          await sleep(500);
-        }
-      }
+          setProgress({
+            current: brandIdx + 1,
+            total: currentPage.brands.length,
+            phase: `Page ${currentPage.offset + 1}: Scanning brand "${brand.name}" (${brandIdx + 1}/${currentPage.brands.length})`
+          });
 
-      if (abortRef.current) {
-        addLog('warning', 'Scraping aborted during brand fetching');
-        setIsRunning(false);
-        return;
-      }
+          addLog('info', `[Page ${currentPage.offset + 1}] Scanning brand "${brand.name}"...`);
 
-      // Deduplicate brands by URL
-      const uniqueBrands = [...new Map(allBrands.map(b => [b.url, b])).values()];
-      addLog('success', `Total unique brands found: ${uniqueBrands.length} from ${pageCount - 1} pages`);
+          try {
+            // Get products for this brand
+            const productsResult = await scraperApi.getBrandProducts(brand.url);
+            
+            if (!productsResult.success || !productsResult.products) {
+              addLog('warning', `[Page ${currentPage.offset + 1}] No products for "${brand.name}"`);
+              // Mark brand as scraped (attempted)
+              currentPage.brands[brandIdx].isScraped = true;
+              setPages([...pageDataList]);
+              continue;
+            }
 
-      // Phase 2: Get products from each brand
-      setProgress({ current: 0, total: uniqueBrands.length, phase: 'Discovering products...' });
-      addLog('info', `Starting to scan ${uniqueBrands.length} brands for products...`);
-      
-      const allProductUrls: ProductLink[] = [];
-      const pendingBrands = [...uniqueBrands];
-      
-      for (let i = 0; i < uniqueBrands.length; i++) {
-        await waitWhilePaused();
-        if (abortRef.current) break;
+            const brandProducts = productsResult.products;
+            const productsToScrape = productLimit 
+              ? brandProducts.slice(0, Math.max(1, Math.floor(productLimit / currentPage.brands.length)))
+              : brandProducts;
 
-        const brand = uniqueBrands[i];
-        const remaining = pendingBrands.length - 1;
-        setProgress({ 
-          current: i + 1, 
-          total: uniqueBrands.length, 
-          phase: `Scanning brand ${i + 1}/${uniqueBrands.length}: ${brand.name}` 
-        });
-        addLog('info', `[${i + 1}/${uniqueBrands.length}] Scanning "${brand.name}" (${remaining} brands remaining)...`);
+            addLog('success', `[Page ${currentPage.offset + 1}] "${brand.name}" has ${brandProducts.length} products, scraping ${productsToScrape.length}`);
 
-        try {
-          const productsResult = await scraperApi.getBrandProducts(brand.url);
-          if (productsResult.success && productsResult.products) {
-            allProductUrls.push(...productsResult.products);
-            addLog('success', `[${i + 1}/${uniqueBrands.length}] Found ${productsResult.products.length} products from "${brand.name}"`);
-          } else {
-            addLog('warning', `[${i + 1}/${uniqueBrands.length}] No products found for "${brand.name}"`);
+            // Scrape each product from this brand
+            for (let prodIdx = 0; prodIdx < productsToScrape.length; prodIdx++) {
+              await waitWhilePaused();
+              if (abortRef.current) break;
+
+              const productLink = productsToScrape[prodIdx];
+
+              try {
+                const result = await scraperApi.scrapeProduct(productLink.url);
+                if (result.success && result.product) {
+                  pageProducts.push(result.product);
+                  setProducts(prev => [...prev, result.product!]);
+                  
+                  // Update page products
+                  currentPage.products = [...pageProducts];
+                  setPages([...pageDataList]);
+
+                  addLog('success', `[Page ${currentPage.offset + 1}] Scraped: "${result.product.name}"`);
+                }
+              } catch (err) {
+                addLog('error', `[Page ${currentPage.offset + 1}] Error scraping "${productLink.name}": ${err}`);
+              }
+
+              await sleep(800);
+            }
+
+            // Mark brand as scraped
+            currentPage.brands[brandIdx].isScraped = true;
+            currentPage.brands[brandIdx].productCount = productsToScrape.length;
+            setPages([...pageDataList]);
+
+          } catch (err) {
+            addLog('error', `[Page ${currentPage.offset + 1}] Error processing "${brand.name}": ${err}`);
           }
-        } catch (err) {
-          addLog('warning', `[${i + 1}/${uniqueBrands.length}] Failed to scan "${brand.name}": ${err}`);
+
+          await sleep(300);
         }
 
-        pendingBrands.shift();
+        // Mark page as complete
+        pageDataList[pageIdx] = {
+          ...currentPage,
+          isCurrentlyProcessing: false,
+          isComplete: true,
+          products: pageProducts,
+        };
+        setPages([...pageDataList]);
 
-        // Rate limiting
-        await sleep(500);
-      }
-
-      if (abortRef.current) {
-        addLog('warning', 'Scraping aborted during product discovery');
-        setIsRunning(false);
-        return;
-      }
-
-      // Deduplicate and limit products
-      const uniqueUrls = [...new Map(allProductUrls.map(p => [p.url, p])).values()];
-      const productsToScrape = limit ? uniqueUrls.slice(0, limit) : uniqueUrls;
-
-      addLog('info', `Total unique products discovered: ${uniqueUrls.length}. Will scrape: ${productsToScrape.length}`);
-
-      // Phase 3: Scrape each product
-      setProgress({ current: 0, total: productsToScrape.length, phase: 'Scraping products...' });
-
-      for (let i = 0; i < productsToScrape.length; i++) {
-        await waitWhilePaused();
-        if (abortRef.current) break;
-
-        const product = productsToScrape[i];
-        const remaining = productsToScrape.length - i - 1;
-        setProgress({ 
-          current: i + 1, 
-          total: productsToScrape.length, 
-          phase: `Scraping product ${i + 1}/${productsToScrape.length}: ${product.name}` 
-        });
-
-        try {
-          const result = await scraperApi.scrapeProduct(product.url);
-          if (result.success && result.product) {
-            setProducts((prev) => [...prev, result.product!]);
-            addLog('success', `[${i + 1}/${productsToScrape.length}] Scraped: "${result.product.name}" (Brand: ${result.product.brand}) - ${remaining} products remaining`);
-          } else {
-            addLog('warning', `[${i + 1}/${productsToScrape.length}] Failed to scrape: "${product.name}"`);
-          }
-        } catch (err) {
-          addLog('error', `[${i + 1}/${productsToScrape.length}] Error scraping "${product.name}": ${err}`);
-        }
-
-        // Rate limiting - be respectful
-        await sleep(1000);
+        addLog('success', `Page offset=${currentPage.offset} completed! ${pageProducts.length} products scraped.`);
       }
 
       if (abortRef.current) {
         addLog('warning', 'Scraping aborted');
       } else {
-        addLog('success', `Scraping completed! Total products scraped: ${productsToScrape.length}`);
+        const totalProducts = pageDataList.reduce((sum, p) => sum + p.products.length, 0);
+        addLog('success', `Scraping completed! Total: ${totalProducts} products from ${pageDataList.length} pages`);
       }
 
     } catch (error) {
@@ -203,6 +231,7 @@ export function useScraper() {
     setIsRunning(false);
     setIsPaused(false);
     setProducts([]);
+    setPages([]);
     setProgress({ current: 0, total: 0, phase: 'Idle' });
     setLogs([]);
   }, []);
@@ -221,15 +250,34 @@ export function useScraper() {
     addLog('success', `Exported ${products.length} products to JSON`);
   }, [products, addLog]);
 
+  const exportPageToJson = useCallback((offset: number) => {
+    const page = pages.find(p => p.offset === offset);
+    if (!page || page.products.length === 0) return;
+
+    const data = JSON.stringify(page.products, null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `incidecoder-offset-${offset}-${new Date().toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    addLog('success', `Exported ${page.products.length} products from page offset=${offset} to JSON`);
+  }, [pages, addLog]);
+
   return {
     products,
     isRunning,
     isPaused,
     progress,
     logs,
+    pages,
     startScraping,
     pauseScraping,
     resetScraping,
     exportToJson,
+    exportPageToJson,
   };
 }
