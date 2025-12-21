@@ -37,7 +37,6 @@ export function ProductsTable({ products }: ProductsTableProps) {
     return (
       p.name.toLowerCase().includes(searchLower) ||
       p.brand.toLowerCase().includes(searchLower) ||
-      p.ingredientsOverview.some((i) => i.toLowerCase().includes(searchLower)) ||
       p.skinThroughIngredientNames.some((i) => i.toLowerCase().includes(searchLower))
     );
   });
@@ -74,15 +73,14 @@ export function ProductsTable({ products }: ProductsTableProps) {
               <TableRow className="hover:bg-transparent border-border/50">
                 <TableHead className="font-semibold">Product</TableHead>
                 <TableHead className="font-semibold">Brand</TableHead>
-                <TableHead className="font-semibold text-center">Overview Count</TableHead>
-                <TableHead className="font-semibold text-center">Skim Through</TableHead>
+                <TableHead className="font-semibold text-center">Ingredient Count</TableHead>
                 <TableHead className="font-semibold w-[100px]">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {paginated.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-12 text-muted-foreground">
+                  <TableCell colSpan={4} className="text-center py-12 text-muted-foreground">
                     {products.length === 0
                       ? 'No products scraped yet. Click "Start Scraping" to begin.'
                       : 'No products match your search.'}
@@ -104,9 +102,6 @@ export function ProductsTable({ products }: ProductsTableProps) {
                       <Badge variant="outline" className="font-normal">
                         {product.brand}
                       </Badge>
-                    </TableCell>
-                    <TableCell className="text-center font-mono text-sm">
-                      {product.ingredientsOverviewCount}
                     </TableCell>
                     <TableCell className="text-center font-mono text-sm">
                       {product.skinThroughCount}
@@ -198,14 +193,6 @@ export function ProductsTable({ products }: ProductsTableProps) {
                   </div>
                 )}
 
-                {selectedProduct.ingredientsOverview && (
-                  <div>
-                    <h4 className="font-semibold mb-2 text-sm text-muted-foreground uppercase tracking-wide">
-                      Ingredients Overview ({selectedProduct.ingredientsOverviewCount} ingredients)
-                    </h4>
-                    <p className="text-sm font-mono text-muted-foreground">{selectedProduct.ingredientsOverview}</p>
-                  </div>
-                )}
 
                 {selectedProduct.skinThroughIngredientNames.length > 0 && (
                   <div>
