@@ -612,16 +612,30 @@ function normalizeIngredientName(text: string): string {
   return cleanIngredientName(text).toLowerCase();
 }
 
-// Smart split ingredients: handles cases like "1, 2-Hexanediol" where comma is part of the name
+// Smart split ingredients: handles cases like "1, 2-Hexanediol" and "[10,000Ppm]" where comma is part of the name
 function smartSplitIngredients(text: string): string[] {
   const result: string[] = [];
   let current = '';
+  let bracketDepth = 0;
+  let parenDepth = 0;
   const chars = text.split('');
   
   for (let i = 0; i < chars.length; i++) {
     const char = chars[i];
     
+    // Track bracket/paren depth
+    if (char === '[') bracketDepth++;
+    else if (char === ']') bracketDepth = Math.max(0, bracketDepth - 1);
+    else if (char === '(') parenDepth++;
+    else if (char === ')') parenDepth = Math.max(0, parenDepth - 1);
+    
     if (char === ',') {
+      // Don't split on comma if we're inside brackets or parentheses
+      if (bracketDepth > 0 || parenDepth > 0) {
+        current += char;
+        continue;
+      }
+      
       // Check if this comma is part of an ingredient name like "1, 2-Hexanediol"
       // Pattern: digit + comma + space + digit (e.g., "1, 2")
       const prevChar = i > 0 ? chars[i - 1] : '';
