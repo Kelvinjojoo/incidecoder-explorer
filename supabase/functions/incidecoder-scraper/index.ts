@@ -599,11 +599,18 @@ function normalizeIdRating(text: string): string {
 // Clean ingredient name for display (removes escape chars, normalizes slashes)
 function cleanIngredientName(text: string): string {
   return (text ?? '')
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')  // Remove zero-width chars
-    .replace(/\\+,?\s*/g, '')               // Remove escape chars like \\, \, \\\\
-    .replace(/\s*\/\s*​*/g, ' /')           // Normalize slash spacing (remove hidden chars)
-    .replace(/​/g, '')                       // Remove zero-width space (U+200B)
-    .replace(/\s*,\s*(?=\d+-)/g, ',')       // "1, 2-" -> "1,2-"
+    .replace(/[\u200B-\u200D\uFEFF]/g, '') // Remove zero-width chars
+    .replace(/\\+,?\s*/g, '') // Remove escape chars like \\, \, \\\\
+    // Remove any trailing ingredient URL that sometimes leaks into text (e.g. "(https: / /incidecoder.com /ingredients /...)" )
+    .replace(/\(\s*https?\s*:\s*\/\s*\/[^)]+\)/gi, '')
+    // Normalize slash spacing (remove hidden chars)
+    .replace(/\s*\/\s*​*/g, ' /')
+    .replace(/​/g, '') // Remove zero-width space (U+200B)
+    // Fix commas used inside names
+    .replace(/\s*,\s*(?=\d+-)/g, ',') // "1, 2-" -> "1,2-"
+    .replace(/(\d)\s*,\s*(\d{3}\b)/g, '$1,$2') // "10, 000" -> "10,000"
+    // Format concentrations like "10,000Ppm" as "[10,000Ppm]"
+    .replace(/(?<!\[)(\b\d{1,3}(?:,\d{3})+)\s*Ppm\b/gi, '[$1Ppm]')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -619,34 +626,40 @@ function smartSplitIngredients(text: string): string[] {
   let bracketDepth = 0;
   let parenDepth = 0;
   const chars = text.split('');
-  
+
   for (let i = 0; i < chars.length; i++) {
     const char = chars[i];
-    
+
     // Track bracket/paren depth
     if (char === '[') bracketDepth++;
     else if (char === ']') bracketDepth = Math.max(0, bracketDepth - 1);
     else if (char === '(') parenDepth++;
     else if (char === ')') parenDepth = Math.max(0, parenDepth - 1);
-    
+
     if (char === ',') {
       // Don't split on comma if we're inside brackets or parentheses
       if (bracketDepth > 0 || parenDepth > 0) {
         current += char;
         continue;
       }
-      
-      // Check if this comma is part of an ingredient name like "1, 2-Hexanediol"
-      // Pattern: digit + comma + space + digit (e.g., "1, 2")
+
       const prevChar = i > 0 ? chars[i - 1] : '';
+      const afterComma = text.slice(i + 1);
+
+      // Thousands separator: "10,000" or "10, 000" (often used in concentrations like 10,000Ppm)
+      if (/^\d$/.test(prevChar) && /^\s*\d{3}\b/.test(afterComma)) {
+        current += char;
+        continue;
+      }
+
+      // Check if this comma is part of an ingredient name like "1, 2-Hexanediol"
+      // Pattern: digit + comma + space + digit + dash (e.g., "1, 2-")
       const nextChars = text.slice(i + 1, i + 4); // Look ahead
-      
-      // If pattern is like ", 2-" where it's followed by space+digit+dash, it's part of the name
       if (/^\d$/.test(prevChar) && /^\s*\d+-/.test(nextChars)) {
         current += char;
         continue;
       }
-      
+
       // Otherwise, this comma separates ingredients
       const trimmed = current.trim();
       if (trimmed.length > 0) {
@@ -657,12 +670,12 @@ function smartSplitIngredients(text: string): string[] {
       current += char;
     }
   }
-  
+
   // Don't forget the last ingredient
   const trimmed = current.trim();
   if (trimmed.length > 0) {
     result.push(trimmed);
   }
-  
+
   return result;
 }
