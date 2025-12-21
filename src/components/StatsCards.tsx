@@ -1,5 +1,5 @@
 import { Card } from '@/components/ui/card';
-import { Package, Sparkles, FlaskConical, Activity } from 'lucide-react';
+import { Package, Sparkles, FlaskConical } from 'lucide-react';
 import type { ScrapedProduct } from '@/lib/api/scraper';
 
 interface StatsCardsProps {
@@ -9,8 +9,7 @@ interface StatsCardsProps {
 export function StatsCards({ products }: StatsCardsProps) {
   const totalProducts = products.length;
   const uniqueBrands = new Set(products.map((p) => p.brand)).size;
-  const totalIngredientsOverview = products.reduce((sum, p) => sum + p.ingredientsOverviewCount, 0);
-  const totalSkinThrough = products.reduce((sum, p) => sum + p.skinThroughCount, 0);
+  const totalIngredients = products.reduce((sum, p) => sum + p.skinThroughCount, 0);
 
   const stats = [
     {
@@ -26,21 +25,15 @@ export function StatsCards({ products }: StatsCardsProps) {
       color: 'text-accent',
     },
     {
-      label: 'Total Ingredients (Overview)',
-      value: totalIngredientsOverview.toLocaleString(),
+      label: 'Total Ingredients',
+      value: totalIngredients.toLocaleString(),
       icon: FlaskConical,
       color: 'text-success',
-    },
-    {
-      label: 'Skin Through Entries',
-      value: totalSkinThrough.toLocaleString(),
-      icon: Activity,
-      color: 'text-warning',
     },
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div className="grid grid-cols-3 gap-4">
       {stats.map((stat, i) => (
         <Card
           key={stat.label}

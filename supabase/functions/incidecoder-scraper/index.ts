@@ -16,8 +16,6 @@ interface ScrapedProduct {
   url: string;
   brand: string;
   description: string;
-  ingredientsOverview: string[];
-  ingredientsOverviewCount: number;
   skinThrough: SkinThroughItem[];
   skinThroughIngredientNames: string[];
   skinThroughCount: number;
@@ -362,60 +360,6 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
     }
   }
 
-  // Extract ingredients overview as a list of ingredient names (avoid "more/less" artifacts)
-  let ingredientsOverview = '';
-  let ingredientsOverviewList: string[] = [];
-
-  const overviewMatch = markdown.match(
-    /Ingredients overview\s*\n+([^#]+?)(?=\n\s*(?:Read more|Save to list|Highlights|##))/is
-  );
-
-  if (overviewMatch) {
-    const overviewRaw = overviewMatch[1]
-      .replace(/\n+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    // Prefer extracting from ingredient links: [Water](https://incidecoder.com/ingredients/water)
-    const linkMatches = [...overviewRaw.matchAll(/\[([^\]]+)\]\((?:https?:\/\/)?(?:www\.)?incidecoder\.com\/ingredients\/[^)]+\)\)/gi)];
-
-    if (linkMatches.length > 0) {
-      ingredientsOverviewList = linkMatches
-        .map((m) => cleanIngredientName(m[1]))
-        .filter((s) => s.length > 0 && !/^(more|less)$/i.test(s));
-    } else {
-      // Fallback: strip links and remove "more/less" even when glued to the next word (e.g. "moreAcrylates")
-      const cleaned = overviewRaw
-        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-        .replace(/\\?\[|\\?\]/g, '')
-        .replace(/more(?=[A-Za-z0-9])/gi, '')
-        .replace(/\bless\b/gi, '')
-        // Remove warning text and UI elements that may appear at the end
-        .replace(/\s*Warning:.*$/i, '')
-        .replace(/\s*!Compare.*$/i, '')
-        .replace(/\s*!Report\s*Error.*$/i, '')
-        .replace(/\s*!Embed.*$/i, '')
-        .replace(/\s*Read\s+here\s+for\s+more\s+detail\.?/gi, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-      ingredientsOverviewList = smartSplitIngredients(cleaned).map(cleanIngredientName);
-    }
-  }
-
-  // Post-process: merge split concentration tokens like ["Extract 10", "000Ppm"] -> ["Extract [10,000Ppm]"]
-  ingredientsOverviewList = mergeConcentrationTokens(ingredientsOverviewList);
-
-  // Filter out empty or junk entries
-  ingredientsOverviewList = ingredientsOverviewList.filter((ing) => {
-    if (!ing || ing.length === 0) return false;
-    // Filter out pure concentration suffixes that shouldn't be standalone
-    if (/^\d{3,}Ppm$/i.test(ing)) return false;
-    return true;
-  });
-
-  const ingredientsOverviewCount = ingredientsOverviewList.length;
-
   // Extract Skim Through / Skin Through table from HTML (more reliable)
   const skinThrough: SkinThroughItem[] = [];
 
@@ -509,22 +453,6 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
     }
   }
 
-  // Ensure we include any Ingredients overview items even if the table row has no details
-  const normalizedSkinNames = new Set(skinThrough.map((i) => normalizeIngredientName(i.name)));
-  for (const ing of ingredientsOverviewList) {
-    const norm = normalizeIngredientName(ing);
-    if (!norm || normalizedSkinNames.has(norm)) continue;
-
-    skinThrough.push({
-      name: cleanIngredientName(ing),
-      whatItDoes: '-',
-      irritancy: '-',
-      comedogenicity: '-',
-      idRating: '-',
-    });
-    normalizedSkinNames.add(norm);
-  }
-
   // Extract ingredient names from skinThrough for comparison
   const skinThroughIngredientNames = skinThrough.map((item) => item.name);
   const skinThroughCount = skinThroughIngredientNames.length;
@@ -534,8 +462,6 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
     url,
     brand,
     description,
-    ingredientsOverview: ingredientsOverviewList,
-    ingredientsOverviewCount,
     skinThrough,
     skinThroughIngredientNames,
     skinThroughCount,
