@@ -9,6 +9,10 @@ interface ScraperControlsProps {
   isPaused: boolean;
   productLimit: string;
   onProductLimitChange: (value: string) => void;
+  startOffset: string;
+  onStartOffsetChange: (value: string) => void;
+  endOffset: string;
+  onEndOffsetChange: (value: string) => void;
   onStart: () => void;
   onPause: () => void;
   onReset: () => void;
@@ -26,6 +30,10 @@ export function ScraperControls({
   isPaused,
   productLimit,
   onProductLimitChange,
+  startOffset,
+  onStartOffsetChange,
+  endOffset,
+  onEndOffsetChange,
   onStart,
   onPause,
   onReset,
@@ -40,9 +48,41 @@ export function ScraperControls({
       <div className="space-y-6">
         {/* Controls Row */}
         <div className="flex flex-wrap items-end gap-4">
-          <div className="flex-1 min-w-[200px]">
+          <div className="flex-1 min-w-[120px] max-w-[150px]">
+            <Label htmlFor="startOffset" className="text-sm font-medium mb-2 block">
+              From Offset
+            </Label>
+            <Input
+              id="startOffset"
+              type="number"
+              min="0"
+              placeholder="0"
+              value={startOffset}
+              onChange={(e) => onStartOffsetChange(e.target.value)}
+              disabled={isRunning}
+              className="bg-background/50 font-mono"
+            />
+          </div>
+
+          <div className="flex-1 min-w-[120px] max-w-[150px]">
+            <Label htmlFor="endOffset" className="text-sm font-medium mb-2 block">
+              To Offset
+            </Label>
+            <Input
+              id="endOffset"
+              type="number"
+              min="0"
+              placeholder="10"
+              value={endOffset}
+              onChange={(e) => onEndOffsetChange(e.target.value)}
+              disabled={isRunning}
+              className="bg-background/50 font-mono"
+            />
+          </div>
+
+          <div className="flex-1 min-w-[150px] max-w-[180px]">
             <Label htmlFor="limit" className="text-sm font-medium mb-2 block">
-              Products to scrape (leave empty for all)
+              Products per page (optional)
             </Label>
             <Input
               id="limit"
@@ -98,7 +138,7 @@ export function ScraperControls({
               disabled={!hasData}
             >
               <Download className="h-4 w-4 mr-2" />
-              Export JSON
+              Export All
             </Button>
           </div>
         </div>

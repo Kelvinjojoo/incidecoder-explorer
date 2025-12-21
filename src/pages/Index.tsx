@@ -4,25 +4,33 @@ import { ScraperControls } from '@/components/ScraperControls';
 import { StatsCards } from '@/components/StatsCards';
 import { ProductsTable } from '@/components/ProductsTable';
 import { LogPanel } from '@/components/LogPanel';
+import { PagesPanel } from '@/components/PagesPanel';
 import { useScraper } from '@/hooks/useScraper';
 
 const Index = () => {
   const [productLimit, setProductLimit] = useState('');
+  const [startOffset, setStartOffset] = useState('0');
+  const [endOffset, setEndOffset] = useState('5');
+  
   const {
     products,
     isRunning,
     isPaused,
     progress,
     logs,
+    pages,
     startScraping,
     pauseScraping,
     resetScraping,
     exportToJson,
+    exportPageToJson,
   } = useScraper();
 
   const handleStart = () => {
+    const start = parseInt(startOffset, 10) || 0;
+    const end = parseInt(endOffset, 10) || 5;
     const limit = productLimit ? parseInt(productLimit, 10) : undefined;
-    startScraping(limit);
+    startScraping(start, end, limit);
   };
 
   return (
@@ -39,6 +47,10 @@ const Index = () => {
           isPaused={isPaused}
           productLimit={productLimit}
           onProductLimitChange={setProductLimit}
+          startOffset={startOffset}
+          onStartOffsetChange={setStartOffset}
+          endOffset={endOffset}
+          onEndOffsetChange={setEndOffset}
           onStart={handleStart}
           onPause={pauseScraping}
           onReset={resetScraping}
@@ -49,6 +61,9 @@ const Index = () => {
 
         {/* Stats */}
         <StatsCards products={products} />
+
+        {/* Pages Panel */}
+        <PagesPanel pages={pages} onExportPage={exportPageToJson} />
 
         {/* Main content grid */}
         <div className="grid lg:grid-cols-3 gap-6">
