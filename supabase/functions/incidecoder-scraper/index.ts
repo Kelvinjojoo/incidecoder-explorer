@@ -380,7 +380,7 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
 
     if (linkMatches.length > 0) {
       ingredientsOverviewList = linkMatches
-        .map((m) => m[1].trim())
+        .map((m) => cleanIngredientName(m[1]))
         .filter((s) => s.length > 0 && !/^(more|less)$/i.test(s));
     } else {
       // Fallback: strip links and remove "more/less" even when glued to the next word (e.g. "moreAcrylates")
@@ -392,7 +392,7 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
         .replace(/\s+/g, ' ')
         .trim();
 
-      ingredientsOverviewList = smartSplitIngredients(cleaned);
+      ingredientsOverviewList = smartSplitIngredients(cleaned).map(cleanIngredientName);
     }
   }
 
@@ -438,7 +438,7 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
       const { irritancy, comedogenicity } = parseIrrCom(irrComText);
 
       skinThrough.push({
-        name: ingredientName,
+        name: cleanIngredientName(ingredientName),
         whatItDoes,
         irritancy,
         comedogenicity,
@@ -480,7 +480,7 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
         if (nameCell && nameCell !== '-') {
           const { irritancy, comedogenicity } = parseIrrCom(irrComCell);
           skinThrough.push({
-            name: nameCell,
+            name: cleanIngredientName(nameCell),
             whatItDoes: whatCell,
             irritancy,
             comedogenicity,
@@ -498,7 +498,7 @@ function parseProductData(markdown: string, html: string, metadata: any, url: st
     if (!norm || normalizedSkinNames.has(norm)) continue;
 
     skinThrough.push({
-      name: ing,
+      name: cleanIngredientName(ing),
       whatItDoes: '-',
       irritancy: '-',
       comedogenicity: '-',
@@ -595,13 +595,20 @@ function normalizeIdRating(text: string): string {
   return t;
 }
 
-function normalizeIngredientName(text: string): string {
+// Clean ingredient name for display (removes escape chars, normalizes slashes)
+function cleanIngredientName(text: string): string {
   return (text ?? '')
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    .replace(/\s*,\s*/g, ',')  // Normalize comma spacing (e.g., "1, 2" -> "1,2")
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')  // Remove zero-width chars
+    .replace(/\\+,?\s*/g, '')               // Remove escape chars like \\, \, \\\\
+    .replace(/\s*\/\s*​*/g, ' /')           // Normalize slash spacing (remove hidden chars)
+    .replace(/​/g, '')                       // Remove zero-width space (U+200B)
+    .replace(/\s*,\s*(?=\d+-)/g, ',')       // "1, 2-" -> "1,2-"
     .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
+    .trim();
+}
+
+function normalizeIngredientName(text: string): string {
+  return cleanIngredientName(text).toLowerCase();
 }
 
 // Smart split ingredients: handles cases like "1, 2-Hexanediol" where comma is part of the name
