@@ -3,6 +3,45 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Retry helper with exponential backoff
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries = 3,
+  baseDelay = 1000
+): Promise<Response> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      
+      // If we get a 500 error from Firecrawl, it might be transient - retry
+      if (response.status === 500 && attempt < maxRetries - 1) {
+        const errorText = await response.text();
+        if (errorText.includes('ERR_TIMED_OUT') || errorText.includes('SCRAPE_SITE_ERROR')) {
+          console.log(`Attempt ${attempt + 1} failed with timeout, retrying...`);
+          await new Promise(resolve => setTimeout(resolve, baseDelay * Math.pow(2, attempt)));
+          continue;
+        }
+        // If it's a different 500 error, return it
+        return new Response(errorText, { status: 500, headers: response.headers });
+      }
+      
+      return response;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.log(`Attempt ${attempt + 1} failed: ${lastError.message}, retrying...`);
+      
+      if (attempt < maxRetries - 1) {
+        await new Promise(resolve => setTimeout(resolve, baseDelay * Math.pow(2, attempt)));
+      }
+    }
+  }
+  
+  throw lastError || new Error('All retry attempts failed');
+}
+
 interface SkinThroughItem {
   name: string;
   whatItDoes: string;
@@ -49,7 +88,7 @@ Deno.serve(async (req) => {
       
       console.log(`Fetching brands from page: ${pageUrl}`);
       
-      const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+      const response = await fetchWithRetry('https://api.firecrawl.dev/v1/scrape', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
@@ -103,7 +142,7 @@ Deno.serve(async (req) => {
       
       console.log(`Fetching brands from page offset=${offset}: ${pageUrl}`);
       
-      const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+      const response = await fetchWithRetry('https://api.firecrawl.dev/v1/scrape', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
@@ -160,7 +199,7 @@ Deno.serve(async (req) => {
 
       console.log(`Fetching products for brand: ${brandUrl}`);
       
-      const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+      const response = await fetchWithRetry('https://api.firecrawl.dev/v1/scrape', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
@@ -217,7 +256,7 @@ Deno.serve(async (req) => {
 
       console.log(`Scraping product: ${url}`);
       
-      const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
+      const response = await fetchWithRetry('https://api.firecrawl.dev/v1/scrape', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
@@ -261,7 +300,7 @@ Deno.serve(async (req) => {
     if (action === 'map-all-products') {
       console.log('Mapping all product URLs from INCIDecoder...');
       
-      const response = await fetch('https://api.firecrawl.dev/v1/map', {
+      const response = await fetchWithRetry('https://api.firecrawl.dev/v1/map', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
