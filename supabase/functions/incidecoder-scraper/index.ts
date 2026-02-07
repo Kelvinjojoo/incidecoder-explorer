@@ -8,7 +8,7 @@ async function fetchWithRetry(
   url: string,
   options: RequestInit,
   maxRetries = 3,
-  baseDelay = 1000
+  baseDelay = 1500
 ): Promise<Response> {
   let lastError: Error | null = null;
   
@@ -16,16 +16,27 @@ async function fetchWithRetry(
     try {
       const response = await fetch(url, options);
       
-      // If we get a 500 error from Firecrawl, it might be transient - retry
-      if (response.status === 500 && attempt < maxRetries - 1) {
+      // Check for retryable errors (408 timeout, 500 server errors, 502/503/504 gateway errors)
+      const isRetryableStatus = [408, 500, 502, 503, 504].includes(response.status);
+      
+      if (isRetryableStatus && attempt < maxRetries - 1) {
         const errorText = await response.text();
-        if (errorText.includes('ERR_TIMED_OUT') || errorText.includes('SCRAPE_SITE_ERROR')) {
-          console.log(`Attempt ${attempt + 1} failed with timeout, retrying...`);
-          await new Promise(resolve => setTimeout(resolve, baseDelay * Math.pow(2, attempt)));
+        // Check for known transient error patterns
+        const isTransientError = 
+          errorText.includes('ERR_TIMED_OUT') || 
+          errorText.includes('SCRAPE_SITE_ERROR') ||
+          errorText.includes('SCRAPE_TIMEOUT') ||
+          errorText.includes('timed out') ||
+          errorText.includes('timeout');
+        
+        if (isTransientError) {
+          const delay = baseDelay * Math.pow(2, attempt);
+          console.log(`Attempt ${attempt + 1} failed with transient error (status ${response.status}), retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
           continue;
         }
-        // If it's a different 500 error, return it
-        return new Response(errorText, { status: 500, headers: response.headers });
+        // If it's a different error type, return it
+        return new Response(errorText, { status: response.status, headers: response.headers });
       }
       
       return response;
@@ -34,7 +45,8 @@ async function fetchWithRetry(
       console.log(`Attempt ${attempt + 1} failed: ${lastError.message}, retrying...`);
       
       if (attempt < maxRetries - 1) {
-        await new Promise(resolve => setTimeout(resolve, baseDelay * Math.pow(2, attempt)));
+        const delay = baseDelay * Math.pow(2, attempt);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
   }
